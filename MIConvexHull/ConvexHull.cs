@@ -27,6 +27,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using UnityEngine;
+using UnityEngine.XR.ARFoundation;
 
 namespace MIConvexHull
 {
@@ -90,6 +92,174 @@ namespace MIConvexHull
                              .ToList();
             return ConvexHull<DefaultVertex, DefaultConvexFace<DefaultVertex>>.Create(points, PlaneDistanceTolerance);
         }
+
+        #region Unity integration
+
+        private static Lazy<Vector2Comparer> vector2Comparer = new Lazy<Vector2Comparer>(() => new Vector2Comparer(), true);
+        private static Lazy<Vector3Comparer> vector3Comparer = new Lazy<Vector3Comparer>(() => new Vector3Comparer(), true);
+
+        public static void Create(Vector2[] vertices, List<Vector2> convexPolygon)
+        {
+            Array.Sort(vertices, vector2Comparer.Value);
+            CreateInternal(vertices, convexPolygon);
+        }
+        public static void Create(List<Vector2> vertices, List<Vector2> convexPolygon)
+        {
+            vertices.Sort(vector2Comparer.Value);
+            CreateInternal(vertices, convexPolygon);
+        }
+        private static void CreateInternal(IList<Vector2> vertices, List<Vector2> convexPolygon)
+        {
+            // Based on https://en.wikibooks.org/wiki/Algorithm_Implementation/Geometry/Convex_hull/Monotone_chain#Java
+
+            if (vertices == null)
+            {
+                throw new ArgumentNullException("The supplied data is null.");
+            }
+
+            if (convexPolygon == null)
+            {
+                throw new ArgumentNullException(nameof(convexPolygon));
+            }
+
+            convexPolygon.Clear();
+
+            var n = vertices.Count;
+            var ans = new Vector2[2 * n]; // In between we may have a 2n points
+            var k = 0;
+            var start = 0;                // start is the first insertion point
+
+            for (var i = 0; i < n; i++)   // Finding lower layer of hull
+            {
+                var p = vertices[i];
+                while (k - start >= 2 && xcross(ans[k - 2], ans[k - 1], p) <= 0)
+                    k--;
+                ans[k++] = p;
+            }
+
+            k--;                         // drop off last point from lower layer
+            start = k;
+
+            for (var i = n - 1; i >= 0; i--)                // Finding top layer from hull
+            {
+                var p = vertices[i];
+                while (k - start >= 2 && xcross(ans[k - 2], ans[k - 1], p) <= 0)
+                    k--;
+                ans[k++] = p;
+            }
+
+            k--;                         // drop off last point from top layer
+
+            convexPolygon.Capacity = k + 1;
+            convexPolygon.AddRange(ans.Take(k));
+        }
+
+        public static void Create(Vector3[] vertices, List<Vector3> convexPolygon)
+            => Create(vertices, convexPolygon, null);
+        public static void Create(Vector3[] vertices, List<Vector3> convexPolygon, List<int> indices)
+        {
+            Array.Sort(vertices, vector3Comparer.Value);
+            CreateInternal(vertices, convexPolygon, indices);
+        }
+        public static void Create(List<Vector3> vertices, List<Vector3> convexPolygon, List<int> indices)
+        {
+            vertices.Sort(vector3Comparer.Value);
+            CreateInternal(vertices, convexPolygon, indices);
+        }
+        private static void CreateInternal(IList<Vector3> vertices, List<Vector3> convexPolygon, List<int> indices)
+        {
+            // Based on https://en.wikibooks.org/wiki/Algorithm_Implementation/Geometry/Convex_hull/Monotone_chain#Java
+
+            if (vertices == null)
+            {
+                throw new ArgumentNullException(nameof(vertices));
+            }
+
+            if (convexPolygon == null)
+            {
+                throw new ArgumentNullException(nameof(convexPolygon));
+            }
+
+            convexPolygon.Clear();
+
+            var n = vertices.Count;
+            var ans = new Vector3[2 * n]; // In between we may have a 2n points
+            var k = 0;
+            var start = 0;                // start is the first insertion point
+
+            for (var i = 0; i < n; i++)   // Finding lower layer of hull
+            {
+                var p = vertices[i];
+                while (k - start >= 2 && xcross(ans[k - 2], ans[k - 1], p) <= 0)
+                    k--;
+                ans[k++] = p;
+            }
+
+            k--;                         // drop off last point from lower layer
+            start = k;
+
+            for (var i = n - 1; i >= 0; i--)                // Finding top layer from hull
+            {
+                var p = vertices[i];
+                while (k - start >= 2 && xcross(ans[k - 2], ans[k - 1], p) <= 0)
+                    k--;
+                ans[k++] = p;
+            }
+
+            k--;                         // drop off last point from top layer
+
+            convexPolygon.Capacity = k + 1;
+            convexPolygon.AddRange(ans.Take(k).Reverse());
+
+            if (indices != null)
+            {
+                float minX = convexPolygon[0].x, minZ = convexPolygon[0].z;
+                float maxX = minX, maxZ = minZ;
+                foreach (var point in convexPolygon)
+                {
+                    if (point.x < minX) minX = point.x;
+                    else if (point.x > maxX) maxX = point.x;
+                    if (point.z < minZ) minZ = point.z;
+                    else if (point.z > maxZ) maxZ = point.z;
+                }
+
+                convexPolygon.Add(new Vector3((minX + maxX) / 2.0f, 0, (minZ + maxZ) / 2.0f));
+
+                ARPlaneMeshGenerators.GenerateIndices(indices, convexPolygon);
+            }
+        }
+
+        private static float xcross(Vector2 O, Vector2 A, Vector2 B)
+        {
+            return (A.x - O.x) * (B.y - O.y) - (A.y - O.y) * (B.x - O.x);
+        }
+
+        private static float xcross(Vector3 O, Vector3 A, Vector3 B)
+        {
+            return (A.x - O.x) * (B.z - O.z) - (A.z - O.z) * (B.x - O.x);
+        }
+
+        private class Vector2Comparer : IComparer<Vector2>
+        {
+            int IComparer<Vector2>.Compare(Vector2 p1, Vector2 p2)
+            {
+                return (p1.x == p2.x)
+                    ? p1.y.CompareTo(p2.y)
+                    : p1.x.CompareTo(p2.x);
+            }
+        }
+
+        private class Vector3Comparer : IComparer<Vector3>
+        {
+            int IComparer<Vector3>.Compare(Vector3 p1, Vector3 p2)
+            {
+                return (p1.x == p2.x)
+                    ? p1.z.CompareTo(p2.z)
+                    : p1.x.CompareTo(p2.x);
+            }
+        }
+
+        #endregion
     }
 
     /// <summary>
